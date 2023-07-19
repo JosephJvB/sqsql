@@ -5,7 +5,8 @@ import {
   SendMessageBatchCommand,
   DeleteMessageBatchCommand,
 } from '@aws-sdk/client-sqs'
-import { User, UserMessage } from '../types'
+import { v4 as uuidv4 } from 'uuid'
+import { User } from '../types'
 
 let _client: SQSClient | null
 
@@ -16,46 +17,52 @@ export const getClient = () => {
   return _client
 }
 
-export const getAllUsers = async () => {
+export const getUserMessages = async () => {
   const getUsersCommand = new ReceiveMessageCommand({
     QueueUrl: process.env.USER_QUEUE_URL,
+    MaxNumberOfMessages: 10,
   })
-  const allMessages = await getAllMessages(getUsersCommand)
 
-  return allMessages.map((m) => ({
-    receiptHandle: m.ReceiptHandle as string,
-    user: JSON.parse(m.Body ?? '{}') as User,
-  }))
+  const messages = await getAllMessages(getUsersCommand)
+  console.log('getUserMessages', messages.length)
+
+  return messages
 }
-export const saveAllUsers = async (users: UserMessage[]) => {
-  const toSave: SendMessageBatchCommand[] = []
+
+export const clearUserMessages = async (messages: Message[]) => {
+  console.log('clearUserMessages', messages.length)
   const toDelete: DeleteMessageBatchCommand[] = []
+  for (let i = 0; i < messages.length; i += 10) {
+    toDelete.push(
+      new DeleteMessageBatchCommand({
+        QueueUrl: process.env.USER_QUEUE_URL,
+        Entries: messages.slice(i, i + 10).map((m) => ({
+          Id: m.MessageId,
+          ReceiptHandle: m.ReceiptHandle,
+        })),
+      }),
+    )
+  }
+  await deleteMessages(toDelete)
+}
+
+export const sendUserMessages = async (users: User[]) => {
+  console.log('sendUserMessages', users.length)
+  const toSave: SendMessageBatchCommand[] = []
   for (let i = 0; i < users.length; i += 10) {
     // save
     const saveCmd = new SendMessageBatchCommand({
       QueueUrl: process.env.USER_QUEUE_URL,
-      Entries: users.slice(i, i + 10).map((u) => ({
-        Id: u.user.id,
-        MessageBody: JSON.stringify(u),
-      })),
+      Entries: users.slice(i, i + 10).map((u) => {
+        return {
+          Id: uuidv4(),
+          MessageBody: JSON.stringify(u),
+        }
+      }),
     })
     toSave.push(saveCmd)
-    // delete
-    const deleteCmd = new DeleteMessageBatchCommand({
-      QueueUrl: process.env.USER_QUEUE_URL,
-      Entries: users
-        .slice(i, i + 10)
-        .filter((u) => !!u.receiptHandle)
-        .map((u) => ({
-          Id: u.user.id,
-          ReceiptHandle: u.receiptHandle,
-        })),
-    })
-    if (deleteCmd.input.Entries?.length) {
-      toDelete.push(deleteCmd)
-    }
   }
-  await Promise.all([sendMessages(toSave), deleteMessages(toDelete)])
+  await sendMessages(toSave)
 }
 
 export const getAllMessages = async (getMessageCommand: ReceiveMessageCommand) => {
@@ -68,6 +75,7 @@ export const getAllMessages = async (getMessageCommand: ReceiveMessageCommand) =
     allMessages.push(...nextMessages)
     lastMessage = nextMessages[nextMessages.length - 1]
   } while (!!lastMessage)
+
   return allMessages
 }
 

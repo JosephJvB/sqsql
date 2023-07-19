@@ -1,8 +1,8 @@
 import { APIGatewayProxyResult } from 'aws-lambda'
-import { v4 as uuidv4 } from 'uuid'
 
-import { DefaultHeaders, HttpAPIEvent, User } from '../types'
-import { getAllUsers, saveAllUsers } from '../clients/sqs'
+import { DefaultHeaders, HttpAPIEvent } from '../types'
+import { handleUserGet } from './userGet'
+import { handleUserPost } from './userPost'
 
 /**
  *
@@ -14,66 +14,16 @@ import { getAllUsers, saveAllUsers } from '../clients/sqs'
  *
  */
 
-export const handleUserGet = async (event: HttpAPIEvent): Promise<APIGatewayProxyResult> => {
-  const userId = event.queryStringParameters?.id
-  const users = await getAllUsers()
-  await saveAllUsers(users)
-
-  if (!userId) {
-    return {
-      statusCode: 200,
-      headers: { ...DefaultHeaders },
-      body: JSON.stringify(users),
-    }
-  }
-
-  const foundUser = users.find((u) => u.user.id === userId)
-  if (!foundUser) {
-    return {
-      statusCode: 400,
-      headers: { ...DefaultHeaders },
-      body: JSON.stringify({
-        message: `Failed to get user by id "${userId}"`,
-      }),
-    }
-  }
-
-  return {
-    statusCode: 200,
-    headers: { ...DefaultHeaders },
-    body: JSON.stringify(foundUser),
-  }
-}
-export const handleUserPost = async (event: HttpAPIEvent): Promise<APIGatewayProxyResult> => {
-  if (!event.body) {
-    return {
-      statusCode: 400,
-      headers: { ...DefaultHeaders },
-      body: JSON.stringify({
-        message: `Failed to create user "${event.body}"`,
-      }),
-    }
-  }
-  const nextUser = JSON.parse(event.body) as User
-
-  const allUsers = await getAllUsers()
-  nextUser.id = uuidv4()
-  allUsers.push({
-    receiptHandle: '',
-    user: nextUser,
-  })
-  await saveAllUsers(allUsers)
-
-  return {
-    statusCode: 200,
-    headers: { ...DefaultHeaders },
-    body: event.body,
-  }
-}
-
 export const lambdaHandler = async (event: HttpAPIEvent): Promise<APIGatewayProxyResult> => {
   try {
-    switch (event.httpMethod) {
+    const { httpMethod, body, queryStringParameters } = event
+    console.log({
+      httpMethod,
+      body,
+      queryStringParameters,
+    })
+
+    switch (httpMethod) {
       case 'OPTIONS':
         return {
           statusCode: 200,
@@ -84,14 +34,14 @@ export const lambdaHandler = async (event: HttpAPIEvent): Promise<APIGatewayProx
         return handleUserGet(event)
       case 'POST':
         return handleUserPost(event)
-      default:
-        return {
-          statusCode: 400,
-          headers: { ...DefaultHeaders },
-          body: JSON.stringify({
-            message: `invalid httpMethod, received "${event.httpMethod}"`,
-          }),
-        }
+    }
+
+    return {
+      statusCode: 400,
+      headers: { ...DefaultHeaders },
+      body: JSON.stringify({
+        message: `invalid httpMethod, received "${httpMethod}"`,
+      }),
     }
   } catch (error: any) {
     console.error(error)
